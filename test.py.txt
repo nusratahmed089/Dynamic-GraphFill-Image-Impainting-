@@ -1,0 +1,62 @@
+import torch
+import torchvision.transforms as T
+from PIL import Image
+import matplotlib.pyplot as plt
+
+from model import InpaintingModel
+from dataset import random_mask
+
+# -----------------------
+# Config
+# -----------------------
+IMG_SIZE = 128
+CKPT_PATH = "checkpoints/model_latest.pth"
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+# -----------------------
+# Inference
+# -----------------------
+def test(image_path):
+    transform = T.Compose([
+        T.Resize((IMG_SIZE, IMG_SIZE)),
+        T.ToTensor()
+    ])
+
+    img = Image.open(image_path).convert("RGB")
+    img = transform(img).unsqueeze(0).to(device)
+
+    mask = random_mask(IMG_SIZE).unsqueeze(0).to(device)
+
+    model = InpaintingModel(feat_dim=64).to(device)
+    model.load_state_dict(torch.load(CKPT_PATH, map_location=device))
+    model.eval()
+
+    with torch.no_grad():
+        output = model(img, mask)
+
+    # Visualization
+    plt.figure(figsize=(12,4))
+
+    plt.subplot(1,3,1)
+    plt.title("Masked Input")
+    plt.imshow((img * mask)[0].permute(1,2,0).cpu())
+    plt.axis("off")
+
+    plt.subplot(1,3,2)
+    plt.title("Inpainted Output")
+    plt.imshow(output[0].permute(1,2,0).cpu())
+    plt.axis("off")
+
+    plt.subplot(1,3,3)
+    plt.title("Ground Truth")
+    plt.imshow(img[0].permute(1,2,0).cpu())
+    plt.axis("off")
+
+    plt.show()
+
+
+if __name__ == "__main__":
+    # Example
+    test("data/val/sample.jpg")

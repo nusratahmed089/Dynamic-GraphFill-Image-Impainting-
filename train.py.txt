@@ -1,0 +1,99 @@
+import os
+import glob
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+
+from dataset import ImageDataset
+from model import InpaintingModel
+
+# -----------------------
+# Config
+# -----------------------
+IMG_SIZE = 128
+MASK_RATIO = 0.3
+BATCH_SIZE = 16
+LR = 1e-4
+EPOCHS = 20
+
+TRAIN_DIR = "data/train"
+VAL_DIR   = "data/val"
+CKPT_DIR  = "checkpoints"
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+os.makedirs(CKPT_DIR, exist_ok=True)
+
+
+# -----------------------
+# Utils
+# -----------------------
+def get_image_paths(folder):
+    exts = ["jpg", "jpeg", "png"]
+    paths = []
+    for e in exts:
+        paths.extend(glob.glob(os.path.join(folder, "**", f"*.{e}"), recursive=True))
+    return paths
+
+
+# -----------------------
+# Training
+# -----------------------
+def train():
+    print("Device:", device)
+
+    train_paths = get_image_paths(TRAIN_DIR)
+    val_paths   = get_image_paths(VAL_DIR)
+
+    train_ds = ImageDataset(train_paths, IMG_SIZE, MASK_RATIO)
+    val_ds   = ImageDataset(val_paths, IMG_SIZE, MASK_RATIO)
+
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader   = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False)
+
+    model = InpaintingModel(feat_dim=64).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+
+    for epoch in range(1, EPOCHS + 1):
+        model.train()
+        train_loss = 0.0
+
+        for masked, mask, gt in train_loader:
+            masked, mask, gt = masked.to(device), mask.to(device), gt.to(device)
+
+            pred = model(masked, mask)
+            loss = F.l1_loss(pred, gt)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            train_loss += loss.item()
+
+        train_loss /= len(train_loader)
+
+        # Validation
+        model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for masked, mask, gt in val_loader:
+                masked, mask, gt = masked.to(device), mask.to(device), gt.to(device)
+                pred = model(masked, mask)
+                val_loss += F.l1_loss(pred, gt).item()
+
+        val_loss /= len(val_loader)
+
+        print(
+            f"Epoch [{epoch}/{EPOCHS}] | "
+            f"Train L1: {train_loss:.4f} | Val L1: {val_loss:.4f}"
+        )
+
+        torch.save(
+            model.state_dict(),
+            os.path.join(CKPT_DIR, "model_latest.pth")
+        )
+
+    print("Training completed.")
+
+
+if __name__ == "__main__":
+    train()
